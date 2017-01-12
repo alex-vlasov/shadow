@@ -165,7 +165,7 @@ PHP_INI_END()
 
 #define SHADOW_OVERRIDE(func) \
 	orig_##func = NULL; \
-	if ((orig = zend_hash_str_find_ptr(CG(function_table), #func, sizeof(#func))) != NULL) { \
+	if ((orig = zend_hash_str_find_ptr(CG(function_table), #func, sizeof(#func) - 1)) != NULL) { \
         orig_##func = orig->internal_function.handler; \
         orig->internal_function.handler = shadow_##func; \
 	}
@@ -198,7 +198,9 @@ static void shadow_override_function(char *fname, int fname_len, int argno, int 
 	override.original.internal_function.handler = shadow_generic_override;
 	override.argno = argno;
 	override.argtype = argtype;
-	zend_hash_str_update_ptr(table, fname, fname_len+1, &override);
+	// @todo wrong ?
+	zend_hash_str_update_ptr(table, fname, fname_len, &override);
+	fprintf(stderr, "Generic override - %s\n", fname);
 }
 
 /* {{{ PHP_MINIT_FUNCTION
@@ -374,7 +376,7 @@ PHP_FUNCTION(shadow)
 {
 	char *temp = NULL;
 	char *inst = NULL;
-	int temp_len, inst_len;
+	size_t temp_len, inst_len;
 	HashTable *instance_only = NULL; /* paths relative to template root */
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ss|h", &temp, &temp_len, &inst, &inst_len, &instance_only) == FAILURE) {
@@ -1041,11 +1043,29 @@ static zval *shadow_get_arg(int arg TSRMLS_DC)
 		return NULL;
 	}
 
-	if(arg >= EG(current_execute_data)->call->func->common.num_args) {
+	zend_execute_data *ex = EG(current_execute_data);
+	if (arg >= ex->func->common.num_args) {
 		return NULL;
 	}
 
-	return ZEND_CALL_ARG(EG(current_execute_data)->call, arg);
+	return ZEND_CALL_ARG(ex, arg + 1);
+}
+
+/*
+ * Call original function while replacing name parameter with repname
+ */
+static int shadow_call_replace_name_ex(zval *name, char *repname, void (*orig_func)(INTERNAL_FUNCTION_PARAMETERS), INTERNAL_FUNCTION_PARAMETERS)
+{
+	zend_string *old_name;
+	zend_string *new_name;
+	old_name = Z_STR_P(name);
+	new_name = zend_string_init(repname, strlen(repname), 0);
+	efree(repname);
+	Z_STR_P(name) = new_name;
+	orig_func(INTERNAL_FUNCTION_PARAM_PASSTHRU);
+	Z_STR_P(name) = old_name;
+	zend_string_release(new_name);
+	return SUCCESS;
 }
 
 /*
@@ -1053,21 +1073,13 @@ static zval *shadow_get_arg(int arg TSRMLS_DC)
  */
 static int shadow_call_replace_name(int param, char *repname, void (*orig_func)(INTERNAL_FUNCTION_PARAMETERS), INTERNAL_FUNCTION_PARAMETERS)
 {
-	zval *old_name, *new_name;
 	zval *name;
 	name = shadow_get_arg(param TSRMLS_CC);
 	if (!name) {
 		orig_func(INTERNAL_FUNCTION_PARAM_PASSTHRU);
 		return FAILURE;
 	}
-	old_name = name;
-	ZVAL_STRING(new_name, repname);
-	efree(repname);
-	name = new_name;
-	orig_func(INTERNAL_FUNCTION_PARAM_PASSTHRU);
-	name = old_name;
-	zval_ptr_dtor(new_name);
-	return SUCCESS;
+	return shadow_call_replace_name_ex(name, repname, orig_func, INTERNAL_FUNCTION_PARAM_PASSTHRU);
 }
 
 /*
@@ -1085,8 +1097,8 @@ static int shadow_stream_check(char *filename TSRMLS_DC)
 static void shadow_touch(INTERNAL_FUNCTION_PARAMETERS)
 {
 	char *filename;
-	int filename_len;
-	long filetime = 0, fileatime = 0;
+	size_t filename_len;
+	zend_long filetime = 0, fileatime = 0;
 	char *instname;
 
 	if(!SHADOW_ENABLED()) {
@@ -1117,8 +1129,8 @@ static void shadow_touch(INTERNAL_FUNCTION_PARAMETERS)
 static void shadow_chmod(INTERNAL_FUNCTION_PARAMETERS)
 {
 	char *filename;
-	int filename_len;
-	long mode;
+	size_t filename_len;
+	zend_long mode;
 	char *instname;
 
 	if(!SHADOW_ENABLED()) {
@@ -1152,7 +1164,7 @@ static void shadow_chmod(INTERNAL_FUNCTION_PARAMETERS)
 static void shadow_chdir(INTERNAL_FUNCTION_PARAMETERS)
 {
 	char *str;
-	int ret, str_len;
+	size_t str_len;
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &str, &str_len) == FAILURE) {
 		RETURN_FALSE;
@@ -1169,7 +1181,7 @@ static void shadow_chdir(INTERNAL_FUNCTION_PARAMETERS)
 static void shadow_fread(INTERNAL_FUNCTION_PARAMETERS)
 {
 	zval *arg1;
-	long len;
+	zend_long len;
 	php_stream *stream;
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "rl", &arg1, &len) == FAILURE) {
@@ -1204,7 +1216,7 @@ static void shadow_fread(INTERNAL_FUNCTION_PARAMETERS)
 static void shadow_realpath(INTERNAL_FUNCTION_PARAMETERS)
 {
 	char *filename;
-	int filename_len;
+	size_t filename_len;
 	char *instname, *copy_name = NULL;
 
 	if(!SHADOW_ENABLED()) {
@@ -1250,7 +1262,7 @@ static void shadow_realpath(INTERNAL_FUNCTION_PARAMETERS)
 static void shadow_is_writable(INTERNAL_FUNCTION_PARAMETERS)
 {
 	char *filename = NULL;
-	int filename_len;
+	size_t filename_len;
 	char *instname;
 	zval **name;
 	zval *old_name, *new_name;
@@ -1287,9 +1299,9 @@ static void shadow_is_writable(INTERNAL_FUNCTION_PARAMETERS)
 static void shadow_glob(INTERNAL_FUNCTION_PARAMETERS)
 {
 	char *filename = NULL;
-	int filename_len;
+	size_t filename_len;
 	zval **name;
-	long flags;
+	zend_long flags;
 	char *instname=NULL, *templname=NULL, *mask=NULL, *path=NULL;
 	zval instdata, templdata;
 	zval *src_entry;
@@ -1429,6 +1441,7 @@ static void shadow_glob(INTERNAL_FUNCTION_PARAMETERS)
 
 static void shadow_generic_override(INTERNAL_FUNCTION_PARAMETERS)
 {
+	fprintf(stderr, "trying Overriding\n");
 	shadow_function *func = (shadow_function *)EG(current_execute_data)->call->func;
 	zval *old_name, *new_name;
 	zval *name;
@@ -1462,12 +1475,7 @@ static void shadow_generic_override(INTERNAL_FUNCTION_PARAMETERS)
 		func->orig_handler(INTERNAL_FUNCTION_PARAM_PASSTHRU);
 		return;
 	}
-	old_name = name;
-	ZVAL_STRING(new_name, instname);
-	efree(instname);
-	name = new_name;
-	func->orig_handler(INTERNAL_FUNCTION_PARAM_PASSTHRU);
-	name = old_name;
+	shadow_call_replace_name_ex(name, instname, func->orig_handler, INTERNAL_FUNCTION_PARAM_PASSTHRU);
 }
 
 /*
