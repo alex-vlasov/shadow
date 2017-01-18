@@ -1411,7 +1411,7 @@ static void shadow_glob(INTERNAL_FUNCTION_PARAMETERS)
 				char *mergepath;
 				if (Z_TYPE_P(src_entry) != IS_STRING) continue; /* weird, glob shouldn't do that to us */
 				spprintf(&mergepath, MAXPATHLEN, "%s/%s", path, Z_STRVAL_P(src_entry)+templen+1);
-				zend_hash_str_add_new(mergedata, mergepath, strlen(mergepath), dummy);
+				zend_hash_str_add_new_ptr(mergedata, mergepath, strlen(mergepath), dummy);
 				efree(mergepath);
 			} ZEND_HASH_FOREACH_END();
 		} else {
@@ -1433,7 +1433,7 @@ static void shadow_glob(INTERNAL_FUNCTION_PARAMETERS)
 			char *mergepath;
 			if (Z_TYPE_P(src_entry) != IS_STRING) continue; /* weird, glob shouldn't do that to us */
 			spprintf(&mergepath, MAXPATHLEN, "%s/%s", path, Z_STRVAL_P(src_entry)+instlen+1);
-			zend_hash_str_add(mergedata, mergepath, strlen(mergepath), dummy);
+			zend_hash_str_add_ptr(mergedata, mergepath, strlen(mergepath), dummy);
 			efree(mergepath);
 		} ZEND_HASH_FOREACH_END();
 	}
