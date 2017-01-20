@@ -66,7 +66,7 @@ int shadow_cache_get(const char *name, char **entry TSRMLS_DC)
 	zend_string *segname_zs = zend_string_init(segname, namelen, 0);
 	if ((centry = zend_hash_find(&SHADOW_G(cache), segname_zs)) != NULL) {
         if(Z_STRLEN_P(centry) == 0){
-            return NULL;
+            return FAILURE;
         }
 		*entry = estrdup(Z_STR_P(centry)->val);
 		efree(segname);
